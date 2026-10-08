@@ -8,7 +8,9 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Bundle
+import android.view.MotionEvent
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -25,7 +27,7 @@ import kotlin.concurrent.thread
  *  4. 按住 PTT 按钮 -> AudioRecord 采集 -> nativePushPcm 发送
  *  5. 后台轮询线程每 20ms nativePollPcm() -> AudioTrack 播放
  *
- * 注意：本文件为 Phase 2b 骨架，编译需要 Android SDK（见 scripts/setup-android-env.sh）。
+ * 注意：编译需要 Android SDK（见 scripts/setup-android-env.sh）。
  */
 class MainActivity : AppCompatActivity() {
 
@@ -37,60 +39,95 @@ class MainActivity : AppCompatActivity() {
 
     private var handle: Long = 0
     private var storeDir: String = ""
-    private var talking = false
+    @Volatile private var talking = false
 
     private lateinit var statusText: TextView
+    private lateinit var peerIp: EditText
+    private lateinit var acceptBtn: Button
+    private lateinit var dialBtn: Button
     private lateinit var pttButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        storeDir = filesDir.absolutePath
+        setContentView(R.layout.activity_main)
 
+        statusText = findViewById(R.id.status_text)
+        peerIp = findViewById(R.id.peer_ip)
+        acceptBtn = findViewById(R.id.btn_accept)
+        dialBtn = findViewById(R.id.btn_dial)
+        pttButton = findViewById(R.id.btn_ptt)
+
+        storeDir = filesDir.absolutePath
         requestAudioPermission()
 
         val fp = NativeCore.nativeKeygen(storeDir)
-        statusText.text = "本机指纹：$fp\n（把这行发给对方核对）"
+        statusText.text = if (fp != null) {
+            "本机指纹：$fp\n（把这行发给对方核对）"
+        } else {
+            "身份初始化失败，请重启应用"
+        }
+
+        acceptBtn.setOnClickListener { startAccept() }
+        dialBtn.setOnClickListener {
+            val ip = peerIp.text.toString().trim()
+            if (ip.isEmpty()) {
+                statusText.text = "请先输入对方 IP"
+            } else {
+                startDial(ip)
+            }
+        }
+        pttButton.setOnTouchListener { _, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> startTalk()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> stopTalk()
+            }
+            true
+        }
     }
 
     /** 作为接收方：等待对方拨入 */
     private fun startAccept() {
-        statusText.text = "等待呼叫中…"
+        if (handle != 0L) return
+        setStatus("等待呼叫中…")
         thread {
             val h = NativeCore.nativeAccept(storeDir, PORT)
             if (h == 0L) {
-                runOnUiThread { statusText.text = "等待超时，请重试" }
+                setStatus("等待超时，请重试")
                 return@thread
             }
-            handle = h
-            val peerFp = NativeCore.nativePeerFingerprint(h)
-            runOnUiThread {
-                statusText.text = "已连接！对方指纹：$peerFp\n请线下核对一致后再说话"
-            }
-            startPlayoutLoop()
+            onConnected(h)
         }
     }
 
     /** 作为发起方：拨向对方 */
     private fun startDial(peerIp: String) {
-        statusText.text = "拨号中…"
+        if (handle != 0L) return
+        setStatus("拨号中…")
         thread {
             val h = NativeCore.nativeDial(storeDir, peerIp, PORT)
             if (h == 0L) {
-                runOnUiThread { statusText.text = "拨号失败：检查IP/网络" }
+                setStatus("拨号失败：检查IP/网络")
                 return@thread
             }
-            handle = h
-            val peerFp = NativeCore.nativePeerFingerprint(h)
-            runOnUiThread {
-                statusText.text = "已连接！对方指纹：$peerFp\n请线下核对一致后再说话"
-            }
-            startPlayoutLoop()
+            onConnected(h)
         }
+    }
+
+    private fun onConnected(h: Long) {
+        handle = h
+        val peerFp = NativeCore.nativePeerFingerprint(h) ?: "（读取失败）"
+        setStatus("已连接！对方指纹：$peerFp\n请线下核对一致后再说话")
+        startPlayoutLoop()
+    }
+
+    private fun setStatus(s: String) {
+        runOnUiThread { statusText.text = s }
     }
 
     /** 按住说话：采集 -> nativePushPcm */
     private fun startTalk() {
-        if (handle == 0L) return
+        val h = handle
+        if (h == 0L || talking) return
         talking = true
         thread {
             val rec = AudioRecord(
@@ -105,7 +142,7 @@ class MainActivity : AppCompatActivity() {
             while (talking) {
                 val n = rec.read(buf, 0, FRAME_SAMPLES)
                 if (n == FRAME_SAMPLES) {
-                    NativeCore.nativePushPcm(handle, buf)
+                    NativeCore.nativePushPcm(h, buf)
                 }
             }
             rec.stop()
@@ -154,10 +191,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (handle != 0L) {
-            NativeCore.nativeSendBye(handle)
-            NativeCore.nativeClose(handle)
-            handle = 0
+        val h = handle
+        handle = 0
+        if (h != 0L) {
+            NativeCore.nativeSendBye(h)
+            NativeCore.nativeClose(h) // 恰好一次；之后不再使用 h
         }
         super.onDestroy()
     }

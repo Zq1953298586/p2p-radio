@@ -19,7 +19,8 @@
 
 use anyhow::{bail, Result};
 use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey, Signature};
+use curve25519_dalek::montgomery::MontgomeryPoint;
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey, Signature};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
@@ -95,11 +96,14 @@ impl IdentityKeypair {
     }
 }
 
-/// 验签：pubkey=对方 Ed25519 公钥，msg=被签消息，sig=64字节签名
+/// 验签：pubkey=对方 Ed25519 公钥，msg=被签消息，sig=64字节签名。
+/// 使用 verify_strict：拒绝弱公钥（低阶点）与非规范 R。
+/// 弱公钥可对"几乎任意消息"生成有效签名（见 ed25519-dalek 文档），
+/// 普通 verify 会放过全零公钥+全零签名这样的伪造——必须用 strict。
 pub fn verify_signature(pubkey: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> Result<()> {
     let vk = VerifyingKey::from_bytes(pubkey).map_err(|e| anyhow::anyhow!("bad pubkey: {}", e))?;
     let signature = Signature::from_bytes(sig);
-    vk.verify(msg, &signature)
+    vk.verify_strict(msg, &signature)
         .map_err(|_| anyhow::anyhow!("signature verification failed"))
 }
 
@@ -133,8 +137,27 @@ pub struct SessionKeys {
     pub tx_nonce_prefix: [u8; 4],
 }
 
+/// 拒绝弱 X25519 公钥：全零或低阶点。
+/// 攻击者若在握手中塞入低阶点，DH 输出将坍缩到 ≤8 种可能，
+/// 三组 DH 全弱时整个会话密钥可被离线暴力破解（8^3=512 种）。
+/// 线下指纹核对是第一道防线，这里是第二道。
+pub fn check_peer_x25519_pubkey(peer_pub: &[u8; 32], role: &str) -> Result<()> {
+    if peer_pub == &[0u8; 32] {
+        bail!("{role}: zero x25519 public key");
+    }
+    let edwards = match MontgomeryPoint(*peer_pub).to_edwards(0) {
+        Some(p) => p,
+        None => bail!("{role}: invalid x25519 public key (u=-1)"),
+    };
+    if edwards.is_small_order() {
+        bail!("{role}: low-order x25519 public key");
+    }
+    Ok(())
+}
+
 /// 建立会话密钥。`initiator` = 我是呼叫方（先发 HELLO）。
 /// 调用方需提供：我的身份私钥、我的临时私钥、对方身份公钥、对方临时公钥。
+/// 对方公钥先过弱密钥检查，不通过直接返回 Err（握手失败）。
 pub fn derive_session_keys(
     initiator: bool,
     my_id: &StaticSecret,
@@ -143,7 +166,10 @@ pub fn derive_session_keys(
     peer_eph_pub: &[u8; 32],
     session_id: u64,
     nonce_prefix_tx: [u8; 4],
-) -> SessionKeys {
+) -> Result<SessionKeys> {
+    check_peer_x25519_pubkey(peer_id_pub, "peer identity key")?;
+    check_peer_x25519_pubkey(peer_eph_pub, "peer ephemeral key")?;
+
     let peer_id = PublicKey::from(*peer_id_pub);
     let peer_eph = PublicKey::from(*peer_eph_pub);
 
@@ -182,11 +208,11 @@ pub fn derive_session_keys(
     } else {
         (k_ba, k_ab)
     };
-    SessionKeys {
+    Ok(SessionKeys {
         tx,
         rx,
         tx_nonce_prefix: nonce_prefix_tx,
-    }
+    })
 }
 
 /// 由 seq 构造 12 字节 nonce：4 字节方向前缀 + 8 字节 seq（大端）
@@ -254,7 +280,8 @@ mod tests {
             &PublicKey::from(&eph_b).to_bytes(),
             sid,
             [1, 2, 3, 4],
-        );
+        )
+        .unwrap();
         let kb = derive_session_keys(
             false,
             &id_b.secret,
@@ -263,7 +290,8 @@ mod tests {
             &PublicKey::from(&eph_a).to_bytes(),
             sid,
             [5, 6, 7, 8],
-        );
+        )
+        .unwrap();
         assert_eq!(ka.tx, kb.rx, "A->B direction must agree");
         assert_eq!(ka.rx, kb.tx, "B->A direction must agree");
         assert_ne!(ka.tx, ka.rx, "directions must use different keys");
@@ -326,5 +354,45 @@ mod tests {
         // 用别人的公钥验 -> 失败
         let other = IdentityKeypair::generate();
         assert!(verify_signature(&other.sign_public_bytes(), &msg, &sig).is_err());
+    }
+
+    #[test]
+    fn verify_rejects_weak_ed25519_key() {
+        // 全零公钥是低阶点：普通 verify 会放过"全零公钥+全零签名"，
+        // verify_strict 必须拒绝。这是库文档明确警告过的陷阱。
+        let msg = b"any message at all";
+        assert!(verify_signature(&[0u8; 32], msg, &[0u8; 64]).is_err());
+        // 正常密钥+正常签名不受影响
+        let id = IdentityKeypair::generate();
+        let sig = id.sign(msg);
+        verify_signature(&id.sign_public_bytes(), msg, &sig).unwrap();
+    }
+
+    #[test]
+    fn derive_rejects_weak_x25519_keys() {
+        let id_a = IdentityKeypair::generate();
+        let eph_a = StaticSecret::random_from_rng(OsRng);
+        let id_b = IdentityKeypair::generate();
+        let eph_b = StaticSecret::random_from_rng(OsRng);
+        let eph_b_pub = PublicKey::from(&eph_b).to_bytes();
+        let sid = 0xABCD;
+
+        // 对方身份密钥全零 -> 拒绝
+        assert!(derive_session_keys(
+            true, &id_a.secret, &eph_a, &[0u8; 32], &eph_b_pub, sid, [0; 4]
+        )
+        .is_err());
+        // 对方临时密钥全零 -> 拒绝
+        assert!(derive_session_keys(
+            true, &id_a.secret, &eph_a, &id_b.public_bytes(), &[0u8; 32], sid, [0; 4]
+        )
+        .is_err());
+        // 对方身份密钥是低阶点（u=1 是 order-4 点）-> 拒绝
+        let mut low_order = [0u8; 32];
+        low_order[0] = 1;
+        assert!(check_peer_x25519_pubkey(&low_order, "test").is_err());
+        // 正常密钥通过
+        check_peer_x25519_pubkey(&id_b.public_bytes(), "test").unwrap();
+        check_peer_x25519_pubkey(&eph_b_pub, "test").unwrap();
     }
 }

@@ -34,13 +34,13 @@ fn e2e_voice_pipeline_with_loss_and_reorder() {
         &id_b.public_bytes(),
         &x25519_dalek::PublicKey::from(&eph_b).to_bytes(),
         sid, [0xAA, 0xBB, 0xCC, 0xDD],
-    );
+    ).unwrap();
     let kb = derive_session_keys(
         false, &id_b.secret, &eph_b,
         &id_a.public_bytes(),
         &x25519_dalek::PublicKey::from(&eph_a).to_bytes(),
         sid, [0x11, 0x22, 0x33, 0x44],
-    );
+    ).unwrap();
 
     // ---- 2. 发送端：250 帧 PCM -> Opus -> 加密打包 ----
     let mut coder_tx = OpusVoiceCoder::new().unwrap();

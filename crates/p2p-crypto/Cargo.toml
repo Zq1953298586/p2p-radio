@@ -8,6 +8,7 @@ anyhow = { workspace = true }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 chacha20poly1305 = "0.10"
+curve25519-dalek = "4"
 hkdf = "0.12"
 sha2 = "0.10"
 rand = "0.8"

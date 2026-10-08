@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="启动中…"
+        android:textSize="14sp"
+        android:minHeight="120dp" />
+
+    <EditText
+        android:id="@+id/peer_ip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="对方 IP，如 192.168.1.5"
+        android:inputType="text" />
+
+    <Button
+        android:id="@+id/btn_accept"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="等待呼叫" />
+
+    <Button
+        android:id="@+id/btn_dial"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="拨号" />
+
+    <Button
+        android:id="@+id/btn_ptt"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="按住说话" />
+
+</LinearLayout>

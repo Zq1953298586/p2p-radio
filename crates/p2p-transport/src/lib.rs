@@ -139,7 +139,7 @@ impl UdpSession {
             &peer_eph_pub,
             session_id,
             tx_prefix,
-        );
+        )?;
         Ok(Self {
             socket,
             peer,
@@ -194,7 +194,7 @@ impl UdpSession {
             &peer_eph_pub,
             h.session_id,
             tx_prefix,
-        );
+        )?;
         Ok(Self {
             socket,
             peer: from,
@@ -372,5 +372,84 @@ mod tests {
         }
         assert!(matches!(jb.pop_or_wait(), JitterAction::Lost)); // seq 3 丢包
         assert!(matches!(jb.pop_or_wait(), JitterAction::Frame(f) if f == vec![4]));
+    }
+
+    fn valid_handshake() -> (IdentityKeypair, u64, [u8; HANDSHAKE_PAYLOAD_LEN]) {
+        let id = IdentityKeypair::generate();
+        let session_id = 0x1234_5678_9ABC_DEF0;
+        let eph = StaticSecret::random_from_rng(OsRng);
+        let eph_pub = x25519_dalek::PublicKey::from(&eph);
+        let mut eph_bytes = [0u8; 32];
+        eph_bytes.copy_from_slice(eph_pub.as_bytes());
+        let payload = build_handshake_payload(&id, session_id, &eph_bytes);
+        (id, session_id, payload)
+    }
+
+    #[test]
+    fn handshake_accepts_valid() {
+        let (id, session_id, payload) = valid_handshake();
+        let (id_pub, eph_pub) = parse_and_verify_handshake(&payload, session_id).unwrap();
+        assert_eq!(id_pub, id.public_bytes());
+        assert_eq!(&eph_pub, &payload[64..96]);
+    }
+
+    /// 对抗性测试：任何篡改/截断/伪造的握手载荷都必须被拒绝，且不能 panic。
+    /// 信任模型注记：签名只覆盖 session_id || eph_pub；X25519 身份公钥的
+    /// 真实性由线下指纹核对保证（见 fingerprint_of）。替换 id_pub 不会
+    /// 导致验签失败，但指纹会变化——下面的测试把这一性质钉死。
+    #[test]
+    fn handshake_rejects_tampering() {
+        let (id, session_id, payload) = valid_handshake();
+
+        // 截断：0..160 任意长度都不能 panic，且 <160 必须拒绝
+        for len in 0..HANDSHAKE_PAYLOAD_LEN {
+            assert!(
+                parse_and_verify_handshake(&payload[..len], session_id).is_err(),
+                "truncated len={len} was accepted"
+            );
+        }
+        // 全零载荷（伪造者最省事的尝试）
+        assert!(parse_and_verify_handshake(&[0u8; HANDSHAKE_PAYLOAD_LEN], session_id).is_err());
+        // 随机垃圾
+        let mut garbage = [0x5Au8; HANDSHAKE_PAYLOAD_LEN];
+        for i in 0..HANDSHAKE_PAYLOAD_LEN {
+            garbage[i] = garbage[i].wrapping_add(i as u8);
+        }
+        assert!(parse_and_verify_handshake(&garbage, session_id).is_err());
+
+        // 签名区逐字节翻转：任何一处篡改都必须拒绝
+        for i in 96..160 {
+            let mut bad = payload;
+            bad[i] ^= 0xFF;
+            assert!(
+                parse_and_verify_handshake(&bad, session_id).is_err(),
+                "tampered sig byte {i} was accepted"
+            );
+        }
+        // 被签名内容（eph_pub）篡改：拒绝
+        for i in [64usize, 80, 95] {
+            let mut bad = payload;
+            bad[i] ^= 0x01;
+            assert!(
+                parse_and_verify_handshake(&bad, session_id).is_err(),
+                "tampered eph_pub byte {i} was accepted"
+            );
+        }
+        // session_id 不一致：拒绝（防跨会话重放握手包）
+        assert!(parse_and_verify_handshake(&payload, session_id.wrapping_add(1)).is_err());
+
+        // 替换 X25519 身份公钥：验签仍通过（签名不覆盖它），但指纹必然变化，
+        // 线下核对指纹时会暴露。这是设计使然，不是漏洞。
+        let attacker = IdentityKeypair::generate();
+        let mut swapped = payload;
+        swapped[..32].copy_from_slice(&attacker.public_bytes());
+        let (id_pub, _) = parse_and_verify_handshake(&swapped, session_id).unwrap();
+        assert_eq!(id_pub, attacker.public_bytes());
+        assert_ne!(fingerprint_of(&id_pub), id.fingerprint());
+
+        // 尾部多余字节被忽略（dial 路径传进来的是整个 datagram 剩余部分）
+        let mut longer = payload.to_vec();
+        longer.extend_from_slice(&[0xFFu8; 64]);
+        assert!(parse_and_verify_handshake(&longer, session_id).is_ok());
     }
 }

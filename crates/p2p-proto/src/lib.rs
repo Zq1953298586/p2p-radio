@@ -132,4 +132,38 @@ mod tests {
         b[0] = 99;
         assert!(PacketHeader::decode(&b).is_err());
     }
+
+    /// 对抗性测试：任意 ptype × 任意截断长度都不能 panic，
+    /// 只有"长度够+版本对+类型合法"才接受。
+    #[test]
+    fn adversarial_header_decode_never_panics() {
+        for ptype in 0..=255u8 {
+            for len in [0usize, 1, 34, 35, 36, 100] {
+                let mut b = vec![0xA5u8; len];
+                if len >= 2 {
+                    b[0] = PROTOCOL_VERSION;
+                    b[1] = ptype;
+                }
+                let r = PacketHeader::decode(&b);
+                let expect_ok = len >= HEADER_LEN && ptype <= 3;
+                assert_eq!(
+                    r.is_ok(),
+                    expect_ok,
+                    "ptype={ptype} len={len}: wrong verdict"
+                );
+            }
+        }
+        // 版本字节被篡改必须拒绝（即使其他都合法）
+        let mut good = PacketHeader {
+            ptype: PacketType::Voice,
+            session_id: 1,
+            seq: 2,
+            ttl: DEFAULT_TTL,
+            timestamp_ms: 3,
+            nonce: [0u8; 12],
+        }
+        .encode();
+        good[0] = PROTOCOL_VERSION.wrapping_add(1);
+        assert!(PacketHeader::decode(&good).is_err());
+    }
 }

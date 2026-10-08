@@ -5,7 +5,9 @@ package com.p2pradio.core
  *   Java_com_p2pradio_core_NativeCore_nativeXxx
  *
  * storeDir：应用私有目录 filesDir.absolutePath，身份密钥存于此（nativeKeygen 创建）。
- * handle：Rust 侧 SessionState 的指针（jlong），0 表示无效。
+ * handle：Rust 侧 Mutex<SessionState> 的指针（jlong），0 表示无效。
+ *   Rust 侧已加互斥，可在任意线程调用 push/poll；nativeClose 必须恰好调用一次，
+ *   调用后把 handle 置 0 且不再使用（二次 close 会 double-free）。
  */
 object NativeCore {
 
@@ -13,8 +15,8 @@ object NativeCore {
         System.loadLibrary("p2p_jni")
     }
 
-    /** 生成/加载设备身份，返回指纹 "XXXX XXXX XXXX XXXX" */
-    external fun nativeKeygen(storeDir: String): String
+    /** 生成/加载设备身份，返回指纹 "XXXX XXXX XXXX XXXX"；失败返回 null */
+    external fun nativeKeygen(storeDir: String): String?
 
     /** 拨号：storeDir, 对方IP, 端口 -> handle（0=失败） */
     external fun nativeDial(storeDir: String, ip: String, port: Int): Long
@@ -22,8 +24,8 @@ object NativeCore {
     /** 接听：在 bindPort 上等 HELLO（最长120秒）-> handle（0=失败/超时） */
     external fun nativeAccept(storeDir: String, bindPort: Int): Long
 
-    /** 对方身份指纹（握手后，用于线下核对） */
-    external fun nativePeerFingerprint(handle: Long): String
+    /** 对方身份指纹（握手后，用于线下核对）；失败返回 null */
+    external fun nativePeerFingerprint(handle: Long): String?
 
     /**
      * 推一帧 PCM（必须恰好 960 个采样 = 20ms @48kHz mono）。

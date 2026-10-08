@@ -17,12 +17,24 @@ use p2p_crypto::IdentityKeypair;
 use p2p_transport::{JitterAction, PacketEvent, UdpSession};
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 
 struct SessionState {
     session: UdpSession,
     coder: OpusVoiceCoder,
     jb: p2p_transport::JitterBuffer,
+}
+
+/// handle 是 *const Mutex<SessionState>。Kotlin 侧可在任意线程调用
+/// nativePushPcm/nativePollPcm，互斥由 Rust 侧保证。
+/// 约束：nativeClose 必须恰好调用一次，调用后不得再使用该 handle，
+/// 且不得与正在进行的调用并发 close（Kotlin 侧把 handle 置 0 即可）。
+fn session_mutex(handle: jlong) -> Result<&'static Mutex<SessionState>> {
+    if handle == 0 {
+        bail!("bad handle");
+    }
+    Ok(unsafe { &*(handle as *const Mutex<SessionState>) })
 }
 
 /// panic 不过 JNI 边界
@@ -101,12 +113,12 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativeDial(
         let id = load_identity(&dir)?;
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let session = UdpSession::dial(socket, peer, &id, Duration::from_secs(8))?;
-        let state = Box::new(SessionState {
+        let state = Mutex::new(SessionState {
             session,
             coder: OpusVoiceCoder::new()?,
             jb: p2p_transport::JitterBuffer::new(),
         });
-        Ok(Box::into_raw(state) as jlong)
+        Ok(Box::into_raw(Box::new(state)) as jlong)
     })
 }
 
@@ -123,12 +135,12 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativeAccept(
         let id = load_identity(&dir)?;
         let socket = UdpSocket::bind(format!("0.0.0.0:{}", bind_port))?;
         let session = UdpSession::accept(socket, &id, Duration::from_secs(120))?;
-        let state = Box::new(SessionState {
+        let state = Mutex::new(SessionState {
             session,
             coder: OpusVoiceCoder::new()?,
             jb: p2p_transport::JitterBuffer::new(),
         });
-        Ok(Box::into_raw(state) as jlong)
+        Ok(Box::into_raw(Box::new(state)) as jlong)
     })
 }
 
@@ -140,10 +152,9 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePeerFingerprint(
     handle: jlong,
 ) -> jobject {
     guard(std::ptr::null_mut(), || {
-        if handle == 0 {
-            bail!("bad handle");
-        }
-        let state = unsafe { &*(handle as *const SessionState) };
+        let state = session_mutex(handle)?
+            .lock()
+            .map_err(|_| anyhow::anyhow!("session poisoned"))?;
         Ok(env
             .new_string(state.session.peer_fingerprint.clone())?
             .into_raw())
@@ -161,10 +172,9 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePushPcm(
     pcm: JShortArray,
 ) -> jint {
     guard(-1, || {
-        if handle == 0 {
-            bail!("bad handle");
-        }
-        let state = unsafe { &mut *(handle as *mut SessionState) };
+        let mut state = session_mutex(handle)?
+            .lock()
+            .map_err(|_| anyhow::anyhow!("session poisoned"))?;
         let mut buf = vec![0i16; FRAME_SAMPLES];
         env.get_short_array_region(&pcm, 0, &mut buf)
             .context("pcm 长度异常")?;
@@ -183,10 +193,9 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePollPcm(
     handle: jlong,
 ) -> jobject {
     guard(std::ptr::null_mut(), || {
-        if handle == 0 {
-            bail!("bad handle");
-        }
-        let state = unsafe { &mut *(handle as *mut SessionState) };
+        let mut state = session_mutex(handle)?
+            .lock()
+            .map_err(|_| anyhow::anyhow!("session poisoned"))?;
         // 先收包（1ms 超时，非阻塞）
         if let Some(ev) = state.session.recv_event(Duration::from_millis(1))? {
             match ev {
@@ -219,25 +228,29 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativeSendBye(
     handle: jlong,
 ) {
     guard((), || {
-        if handle == 0 {
-            bail!("bad handle");
-        }
-        let state = unsafe { &mut *(handle as *mut SessionState) };
+        let mut state = session_mutex(handle)?
+            .lock()
+            .map_err(|_| anyhow::anyhow!("session poisoned"))?;
         state.session.send_bye()?;
         Ok(())
     })
 }
 
 /// static void nativeClose(long handle)
+/// 必须恰好调用一次；调用后 Kotlin 侧必须把 handle 置 0 且不再使用。
 #[no_mangle]
 pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativeClose(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
-    if handle != 0 {
-        unsafe {
-            drop(Box::from_raw(handle as *mut SessionState));
+    guard((), || {
+        if handle == 0 {
+            return Ok(());
         }
-    }
+        unsafe {
+            drop(Box::from_raw(handle as *mut Mutex<SessionState>));
+        }
+        Ok(())
+    })
 }
