@@ -72,6 +72,8 @@ simulated reorder + loss → decrypt → jitter buffer → decode, and asserts a
 ## Try it (two terminals, same machine)
 
 ```sh
+# test-voice.wav is git-ignored; generate it if missing:
+python3 phase1-kit/make-test-voice.py
 ./target/release/p2p-radio keygen
 # Terminal 1 (receiver):
 ./target/release/p2p-radio rx --listen 0.0.0.0:9001 --out out.wav
