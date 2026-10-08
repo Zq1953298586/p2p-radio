@@ -1,0 +1,20 @@
+[package]
+name = "p2p-radio"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "p2p-radio"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+p2p-proto = { path = "../../crates/p2p-proto" }
+p2p-crypto = { path = "../../crates/p2p-crypto" }
+p2p-transport = { path = "../../crates/p2p-transport" }
+p2p-audio = { path = "../../crates/p2p-audio" }
+hound = "3"
+
+[dev-dependencies]
+rand = "0.8"
+x25519-dalek = { version = "2", features = ["static_secrets"] }

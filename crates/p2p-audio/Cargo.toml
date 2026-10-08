@@ -1,0 +1,8 @@
+[package]
+name = "p2p-audio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+opus = "0.3"

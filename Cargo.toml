@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/p2p-proto",
+    "crates/p2p-crypto",
+    "crates/p2p-transport",
+    "crates/p2p-audio",
+    "crates/p2p-jni",
+    "apps/cli",
+]
+
+[workspace.dependencies]
+anyhow = "1"

@@ -1,0 +1,28 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Test / build artifacts
+*.tar.gz
+phase1-kit/p2p-radio
+*.wav
+
+# Identity keys (never commit real ones)
+*.key
+*.idkey
+.p2p-radio/
+
+# Android
+apps/android/.gradle/
+apps/android/app/build/
+apps/android/build/
+*.apk
+*.aab
+local.properties
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
