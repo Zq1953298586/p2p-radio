@@ -10,6 +10,7 @@ use p2p_crypto::{derive_session_keys, decrypt, encrypt, make_nonce, IdentityKeyp
 use p2p_proto::{PacketHeader, PacketType, DEFAULT_TTL, HEADER_LEN};
 use p2p_transport::{JitterAction, JitterBuffer};
 use rand::rngs::OsRng;
+use std::time::Duration;
 use x25519_dalek::StaticSecret;
 
 fn sine_frame(freq: f32, phase: f32) -> Vec<i16> {
@@ -125,4 +126,30 @@ fn e2e_voice_pipeline_with_loss_and_reorder() {
     }
     w.finalize().unwrap();
     println!("e2e ok: played={} lost(concealed)={} -> {}", played, lost, out_path);
+}
+
+/// 实时性预算：单帧完整管线（Opus编码→加密→解密→解码）必须远小于 20ms 帧间隔。
+/// 实测约 0.3ms；断言放宽到 5ms，CI 机器波动也不至于误杀。
+#[test]
+fn frame_pipeline_within_realtime_budget() {
+    use std::time::Instant;
+    let mut coder = OpusVoiceCoder::new().unwrap();
+    let key = [7u8; 32];
+    let pcm = vec![1000i16; FRAME_SAMPLES];
+    let n = 200u32;
+    let t = Instant::now();
+    for i in 0..n {
+        let opus = coder.encode_frame(&pcm).unwrap();
+        let nonce = make_nonce(&[1, 2, 3, 4], i);
+        let ct = encrypt(&key, &nonce, b"aad", &opus);
+        let pt = decrypt(&key, &nonce, b"aad", &ct).unwrap();
+        let _ = coder.decode_frame(&pt, false).unwrap();
+    }
+    let avg = t.elapsed() / n;
+    println!("avg per-frame pipeline: {:?}", avg);
+    assert!(
+        avg < Duration::from_millis(5),
+        "pipeline too slow for realtime: {:?} per frame",
+        avg
+    );
 }
