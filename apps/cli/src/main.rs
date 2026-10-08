@@ -165,7 +165,7 @@ fn cmd_rx(bind: &str, wav_out: &str) -> Result<()> {
                             writer.write_sample(*s)?;
                         }
                         frames_written += 1;
-                        if frames_written % 50 == 0 {
+                        if frames_written.is_multiple_of(50) {
                             println!("[rx] concealed a lost frame");
                         }
                     }
@@ -193,16 +193,13 @@ fn cmd_rx(bind: &str, wav_out: &str) -> Result<()> {
             // draining：缓冲空了就退出
             let mut drained = true;
             for _ in 0..8 {
-                match jb.pop_or_wait() {
-                    JitterAction::Frame(opus) => {
-                        let pcm = coder.decode_frame(&opus, false)?;
-                        for s in &pcm {
-                            writer.write_sample(*s)?;
-                        }
-                        frames_written += 1;
-                        drained = false;
+                if let JitterAction::Frame(opus) = jb.pop_or_wait() {
+                    let pcm = coder.decode_frame(&opus, false)?;
+                    for s in &pcm {
+                        writer.write_sample(*s)?;
                     }
-                    _ => {}
+                    frames_written += 1;
+                    drained = false;
                 }
             }
             if drained {
