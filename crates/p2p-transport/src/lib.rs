@@ -230,12 +230,10 @@ impl UdpSession {
 
     /// 接收一帧：返回 (seq, Opus 明文帧)。nonce 直接取自包头。
     pub fn recv_voice(&mut self, timeout: Duration) -> Result<(u32, Vec<u8>)> {
-        loop {
-            match self.recv_event(timeout)? {
-                Some(PacketEvent::Voice(seq, frame)) => return Ok((seq, frame)),
-                Some(PacketEvent::Bye) => bail!("peer hung up (BYE)"),
-                None => bail!("recv timeout"),
-            }
+        match self.recv_event(timeout)? {
+            Some(PacketEvent::Voice(seq, frame)) => Ok((seq, frame)),
+            Some(PacketEvent::Bye) => bail!("peer hung up (BYE)"),
+            None => bail!("recv timeout"),
         }
     }
 
@@ -291,6 +289,12 @@ pub struct JitterBuffer {
     window: std::collections::BTreeMap<u32, Vec<u8>>,
     expected: u32,
     max_wait: usize,
+}
+
+impl Default for JitterBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl JitterBuffer {
