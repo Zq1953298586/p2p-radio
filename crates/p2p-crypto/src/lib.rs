@@ -8,9 +8,9 @@
 //!   线下核对指纹即认证了 X25519 公钥，攻击者若替换任一公钥都会导致
 //!   指纹不匹配或验签失败——因此一次指纹核对同时锁定两把钥匙。
 //! - 会话：每次通话双方各生成临时 X25519 密钥对，三组 DH：
-//!     s1 = DH(身份_initiator, 临时_responder)
-//!     s2 = DH(临时_initiator, 身份_responder)
-//!     s3 = DH(临时_initiator, 临时_responder)
+//!   s1 = DH(身份_initiator, 临时_responder)
+//!   s2 = DH(临时_initiator, 身份_responder)
+//!   s3 = DH(临时_initiator, 临时_responder)
 //!   master = HKDF-SHA256(s1||s2||s3)，再派生两个方向密钥。
 //! - 握手签名：每条 HELLO/HELLO_ACK 载荷附带 Ed25519 签名，
 //!   签名对象 = session_id || 本方临时公钥；验签失败直接拒绝握手。
@@ -118,7 +118,7 @@ pub fn handshake_sign_msg(session_id: u64, eph_pub: &[u8; 32]) -> Vec<u8> {
 pub fn fingerprint_of(pubkey: &[u8; 32]) -> String {
     let h = Sha256::digest(pubkey);
     let hex: String = h[..8].iter().map(|b| format!("{:02X}", b)).collect();
-    vec![
+    [
         hex[0..4].to_string(),
         hex[4..8].to_string(),
         hex[8..12].to_string(),
