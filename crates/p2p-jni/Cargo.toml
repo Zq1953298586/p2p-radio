@@ -1,0 +1,15 @@
+[package]
+name = "p2p-jni"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+p2p-proto = { path = "../p2p-proto" }
+p2p-crypto = { path = "../p2p-crypto" }
+p2p-transport = { path = "../p2p-transport" }
+p2p-audio = { path = "../p2p-audio" }
+jni = "0.21"

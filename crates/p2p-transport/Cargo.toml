@@ -1,0 +1,11 @@
+[package]
+name = "p2p-transport"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+p2p-proto = { path = "../p2p-proto" }
+p2p-crypto = { path = "../p2p-crypto" }
+rand = "0.8"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
