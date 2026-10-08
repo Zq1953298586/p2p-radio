@@ -147,7 +147,7 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativeAccept(
 /// static String nativePeerFingerprint(long handle)
 #[no_mangle]
 pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePeerFingerprint(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jobject {
@@ -166,7 +166,7 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePeerFingerprint(
 /// static int nativePushPcm(long handle, short[] pcm960) -> seq(-1=失败)
 #[no_mangle]
 pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePushPcm(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     handle: jlong,
     pcm: JShortArray,
@@ -188,7 +188,7 @@ pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePushPcm(
 /// null 表示这一拍没数据（Kotlin 侧直接跳过，保持 20ms 节奏由 Kotlin 定时器控制）
 #[no_mangle]
 pub extern "system" fn Java_com_p2pradio_core_NativeCore_nativePollPcm(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jobject {
