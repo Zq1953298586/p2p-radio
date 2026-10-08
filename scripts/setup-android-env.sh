@@ -59,3 +59,13 @@ cargo ndk -t aarch64-linux-android \
 echo "=== 完成 ==="
 ls -la apps/android/app/src/main/jniLibs/arm64-v8a/
 echo "下一步：用 Android Studio 打开 apps/android，连接真机，Run。"
+echo ""
+echo "=== 6/6 安装 Gradle（本地命令行编译用）==="
+if ! command -v gradle >/dev/null 2>&1; then
+  curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+  sudo unzip -q /tmp/gradle.zip -d /opt
+  echo 'export PATH=/opt/gradle-8.7/bin:$PATH' >> ~/.bashrc
+  export PATH=/opt/gradle-8.7/bin:$PATH
+fi
+gradle --version | head -8
+echo "本地编 APK：cd apps/android && gradle :app:assembleDebug"
